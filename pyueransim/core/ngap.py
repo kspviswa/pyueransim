@@ -15,6 +15,10 @@ import ipaddress
 # NGAP Payload Protocol Identifier (PPID)
 NGAP_PPID = 0  # NGAP uses PPID 0
 
+# SCTP constants
+SCTP_INITMSG = 5
+SCTP_EVENTS = 0x800
+
 # NGAP Message Types
 class ENgapMessageType(Enum):
     """NGAP message types."""
@@ -156,26 +160,12 @@ class SctpSocket:
         """Create SCTP socket."""
         import sctp
 
-        self.socket = sctp.sctp_socket(
-            socket.AF_INET if not self.is_ipv6 else socket.AF_INET6,
-            socket.SOCK_STREAM,
-            sctp.IPPROTO_SCTP
+        self.socket = sctp.sctpsocket(
+            socket.AF_INET if not self.is_ipv6 else socket.AF_INET6
         )
 
-        # Set init options (same as UERANSIM)
-        init_opts = sctp.sctp_initmsg(max_in_streams, max_out_streams, 10, 10 * 1000)
-        self.socket.setsockopt(sctp.IPPROTO_SCTP, sctp.SCTP_INITMSG, init_opts)
-
-        # Set event subscriptions
-        events = sctp.sctp_event_subscribe()
-        events.sctp_data_io_event = 1
-        events.sctp_association_event = 1
-        events.sctp_address_event = 1
-        events.sctp_send_failure_event = 1
-        events.sctp_peer_error_event = 1
-        events.sctp_shutdown_event = 1
-        events.sctp_partial_delivery_event = 1
-        self.socket.setsockopt(sctp.IPPROTO_SCTP, sctp.SCTP_EVENTS, events)
+        # Set SCTP options
+        self.socket.setsockopt(socket.SOL_SCTP, SCTP_INITMSG, max_in_streams, max_out_streams)
 
         # Bind if port specified
         if self.local_port > 0:
@@ -201,7 +191,8 @@ class SctpSocket:
             return False
 
         try:
-            self.socket.sctp_send(data, ppid=ppid, stream=stream)
+            # Use sendall for TCP-style SCTP
+            self.socket.sendall(data)
             return True
         except Exception as e:
             print(f"SCTP send failed: {e}")
@@ -213,7 +204,7 @@ class SctpSocket:
             return None
 
         try:
-            data, msg_ppid, stream, flags = self.socket.sctp_recv(buffer_size)
+            data = self.socket.recv(buffer_size)
             return data
         except Exception as e:
             print(f"SCTP recv failed: {e}")
