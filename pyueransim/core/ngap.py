@@ -170,6 +170,9 @@ class SctpSocket:
                 # Fallback: use socket module directly
                 self.socket = socket.socket(family, socket.SOCK_STREAM, socket.IPPROTO_SCTP)
 
+        # Make socket non-blocking for async
+        self.socket.setblocking(False)
+
         # Bind if port specified
         if self.local_port > 0:
             self.socket.bind((self.local_address, self.local_port))
@@ -180,11 +183,21 @@ class SctpSocket:
             raise RuntimeError("Socket not created. Call create() first.")
 
         try:
-            self.socket.connect((remote_address, remote_port))
+            # Use asyncio for non-blocking connect
+            loop = asyncio.get_event_loop()
+            await asyncio.wait_for(
+                loop.sock_connect(self.socket, (remote_address, remote_port)),
+                timeout=5.0
+            )
             self.connected = True
+            print(f"[SCTP] Connected to {remote_address}:{remote_port}")
             return True
+        except asyncio.TimeoutError:
+            print(f"[SCTP] Connection timeout to {remote_address}:{remote_port}")
+            self.connected = False
+            return False
         except Exception as e:
-            print(f"SCTP connection failed to {remote_address}:{remote_port}: {e}")
+            print(f"[SCTP] Connection failed to {remote_address}:{remote_port}: {e}")
             self.connected = False
             return False
 
@@ -194,11 +207,14 @@ class SctpSocket:
             return False
 
         try:
-            # Use sendall for TCP-style SCTP
-            self.socket.sendall(data)
+            loop = asyncio.get_event_loop()
+            await asyncio.wait_for(
+                loop.sock_sendall(self.socket, data),
+                timeout=5.0
+            )
             return True
         except Exception as e:
-            print(f"SCTP send failed: {e}")
+            print(f"[SCTP] Send failed: {e}")
             return False
 
     async def recv(self, buffer_size: int = 8192) -> Optional[bytes]:
@@ -207,10 +223,14 @@ class SctpSocket:
             return None
 
         try:
-            data = self.socket.recv(buffer_size)
+            loop = asyncio.get_event_loop()
+            data = await asyncio.wait_for(
+                loop.sock_recv(self.socket, buffer_size),
+                timeout=5.0
+            )
             return data
         except Exception as e:
-            print(f"SCTP recv failed: {e}")
+            print(f"[SCTP] Recv failed: {e}")
             return None
 
     def close(self) -> None:
@@ -301,16 +321,24 @@ class NgapConnection:
     async def receive_loop(self) -> None:
         """Run the receive loop for incoming messages."""
         if not self.sctp_socket:
+            print("[NGAP] No SCTP socket for receive loop")
             return
 
+        print("[NGAP] Starting receive loop")
         buffer_size = 8192
         while self.connected:
-            data = await self.sctp_socket.recv(buffer_size)
-            if data:
-                if self.on_message:
-                    self.on_message(data, 0)
-            else:
-                await asyncio.sleep(0.1)
+            try:
+                data = await self.sctp_socket.recv(buffer_size)
+                if data:
+                    print(f"[NGAP] Received {len(data)} bytes from AMF")
+                    if self.on_message:
+                        self.on_message(data, 0)
+                else:
+                    print("[NGAP] Empty data received, connection may be closed")
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"[NGAP] Receive error: {e}")
+                await asyncio.sleep(0.5)
 
     def generate_ran_ue_id(self) -> int:
         """Generate new RAN UE NGAP ID."""
