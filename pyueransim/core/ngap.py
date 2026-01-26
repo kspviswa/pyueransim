@@ -160,9 +160,17 @@ class SctpSocket:
         """Create SCTP socket."""
         import sctp
 
-        self.socket = sctp.sctpsocket(
-            socket.AF_INET if not self.is_ipv6 else socket.AF_INET6
-        )
+        # Try different pysctp APIs
+        try:
+            # Newer API: sctpsocket(style, sk=None)
+            self.socket = sctp.sctpsocket(socket.AF_INET if not self.is_ipv6 else socket.AF_INET6, None)
+        except TypeError:
+            try:
+                # Older API: sctpsocket(style)
+                self.socket = sctp.sctpsocket(socket.AF_INET if not self.is_ipv6 else socket.AF_INET6)
+            except AttributeError:
+                # Fallback: use socket module directly
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_SCTP)
 
         # Set SCTP options
         self.socket.setsockopt(socket.SOL_SCTP, SCTP_INITMSG, max_in_streams, max_out_streams)
