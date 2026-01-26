@@ -1,0 +1,20 @@
+[project]
+name = "pyueransim"
+version = "0.1.0"
+description = "Python port of UERANSIM - 5G SA gNB and UE simulator"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "websockets>=13.0",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.5.0",
+]
+
+[project.scripts]
+py5gsim = "pyueransim.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
