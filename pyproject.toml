@@ -10,6 +10,7 @@ dependencies = [
     "websockets>=13.0",
     "pyyaml>=6.0.1",
     "pydantic>=2.5.0",
+    "pysctp>=0.1.0",
 ]
 
 [project.scripts]
