@@ -15,10 +15,6 @@ import ipaddress
 # NGAP Payload Protocol Identifier (PPID)
 NGAP_PPID = 0  # NGAP uses PPID 0
 
-# SCTP constants
-SCTP_INITMSG = 5
-SCTP_EVENTS = 0x800
-
 # NGAP Message Types
 class ENgapMessageType(Enum):
     """NGAP message types."""
@@ -160,20 +156,19 @@ class SctpSocket:
         """Create SCTP socket."""
         import sctp
 
-        # Try different pysctp APIs
+        family = socket.AF_INET if not self.is_ipv6 else socket.AF_INET6
+
+        # pysctp API: sctpsocket(family, style, sk=None)
+        # style can be sctp.TCP_STYLE or sctp.UDP_STYLE
         try:
-            # Newer API: sctpsocket(style, sk=None)
-            self.socket = sctp.sctpsocket(socket.AF_INET if not self.is_ipv6 else socket.AF_INET6, None)
+            self.socket = sctp.sctpsocket(family, sctp.TCP_STYLE, None)
         except TypeError:
+            # Older API without sk parameter
             try:
-                # Older API: sctpsocket(style)
-                self.socket = sctp.sctpsocket(socket.AF_INET if not self.is_ipv6 else socket.AF_INET6)
+                self.socket = sctp.sctpsocket(family, sctp.TCP_STYLE)
             except AttributeError:
                 # Fallback: use socket module directly
-                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_SCTP)
-
-        # Set SCTP options
-        self.socket.setsockopt(socket.SOL_SCTP, SCTP_INITMSG, max_in_streams, max_out_streams)
+                self.socket = socket.socket(family, socket.SOCK_STREAM, socket.IPPROTO_SCTP)
 
         # Bind if port specified
         if self.local_port > 0:
