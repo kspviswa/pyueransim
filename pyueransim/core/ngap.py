@@ -159,17 +159,24 @@ class SctpSocket:
 
         family = socket.AF_INET if not self.is_ipv6 else socket.AF_INET6
 
+        print(f"[SCTP] Creating socket: family={family}, is_ipv6={self.is_ipv6}")
+
         # pysctp API: sctpsocket(family, style, sk=None)
         # style can be sctp.TCP_STYLE or sctp.UDP_STYLE
         try:
             self.socket = sctp.sctpsocket(family, sctp.TCP_STYLE, None)
+            print(f"[SCTP] Created pysctp socket with TCP_STYLE and sk=None")
         except TypeError:
             # Older API without sk parameter
             try:
                 self.socket = sctp.sctpsocket(family, sctp.TCP_STYLE)
+                print(f"[SCTP] Created pysctp socket with TCP_STYLE (no sk)")
             except AttributeError:
+                print("[SCTP] Falling back to socket module directly")
                 # Fallback: use socket module directly
                 self.socket = socket.socket(family, socket.SOCK_STREAM, socket.IPPROTO_SCTP)
+
+        print(f"[SCTP] Socket created: type={self.socket.type}, proto={self.socket.proto}")
 
         # Make socket non-blocking for async
         self.socket.setblocking(False)
@@ -177,11 +184,16 @@ class SctpSocket:
         # Bind if port specified
         if self.local_port > 0:
             self.socket.bind((self.local_address, self.local_port))
+            print(f"[SCTP] Bound to {self.local_address}:{self.local_port}")
 
     async def connect(self, remote_address: str, remote_port: int) -> bool:
         """Connect to remote endpoint."""
         if not self.socket:
             raise RuntimeError("Socket not created. Call create() first.")
+
+        print(f"[SCTP] Attempting connect to {remote_address}:{remote_port}...")
+        print(f"[SCTP] Socket fd: {self.socket.fileno() if hasattr(self.socket, 'fileno') else 'N/A'}")
+        print(f"[SCTP] Socket type: {self.socket.type}, proto: {self.socket.proto}")
 
         try:
             # Use asyncio for non-blocking connect
@@ -201,12 +213,15 @@ class SctpSocket:
             return False
         except Exception as e:
             print(f"[SCTP] Connection failed to {remote_address}:{remote_port}: {e}")
+            import traceback
+            traceback.print_exc()
             self.connected = False
             return False
 
     async def send(self, data: bytes, stream: int = 0, ppid: int = NGAP_PPID) -> bool:
         """Send data over SCTP."""
         if not self.socket or not self.connected:
+            print(f"[SCTP] Send failed: socket={self.socket}, connected={self.connected}")
             return False
 
         try:
@@ -215,14 +230,19 @@ class SctpSocket:
                 loop.sock_sendall(self.socket, data),
                 timeout=5.0
             )
+            print(f"[SCTP] Send SUCCESS: {len(data)} bytes, stream={stream}, ppid={ppid}")
+            print(f"[SCTP] Data hex: {data.hex()[:64]}...")
             return True
         except Exception as e:
             print(f"[SCTP] Send failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     async def recv(self, buffer_size: int = 8192) -> Optional[bytes]:
         """Receive data from SCTP."""
         if not self.socket or not self.connected:
+            print(f"[SCTP] Recv skipped: socket={self.socket}, connected={self.connected}")
             return None
 
         try:
@@ -231,15 +251,19 @@ class SctpSocket:
             data = await loop.sock_recv(self.socket, buffer_size)
             if not data:
                 # Connection closed by peer
+                print("[SCTP] Recv: connection closed by peer")
                 self.connected = False
                 return None
+            print(f"[SCTP] Recv SUCCESS: {len(data)} bytes")
             return data
         except asyncio.CancelledError:
             raise
         except OSError as e:
             if e.errno == 107:  # ENOTCONN - Transport endpoint is not connected
+                print(f"[SCTP] Recv: ENOTCONN - not connected")
                 self.connected = False
             elif e.errno == 104:  # ECONNRESET - Connection reset by peer
+                print(f"[SCTP] Recv: ECONNRESET - connection reset by peer")
                 self.connected = False
                 if self.on_association_change:
                     self.on_association_change("connection_reset")
@@ -287,22 +311,27 @@ class NgapConnection:
 
     async def connect(self) -> bool:
         """Establish SCTP connection to AMF."""
+        print(f"[NGAP] connect(): gnb_id={self.gnb_id}, local={self.local_address}:{self.local_port}, remote={self.amf_host}:{self.amf_port}")
         try:
             self.sctp_socket = SctpSocket(self.local_address, self.local_port)
             # Pass association change callback
             self.sctp_socket.on_association_change = self.on_association_change
+            print(f"[NGAP] Creating SCTP socket...")
             await self.sctp_socket.create(max_in_streams=10, max_out_streams=10)
+            print(f"[NGAP] SCTP socket created, attempting connect...")
 
             connected = await self.sctp_socket.connect(self.amf_host, self.amf_port)
             if connected:
                 self.connected = True
-                print(f"[NGAP] Connected to AMF {self.amf_host}:{self.amf_port}")
+                print(f"[NGAP] CONNECTED to AMF {self.amf_host}:{self.amf_port}")
                 return True
             else:
                 print(f"[NGAP] Failed to connect to AMF {self.amf_host}:{self.amf_port}")
                 return False
         except Exception as e:
             print(f"[NGAP] Connection error: {e}")
+            import traceback
+            traceback.print_exc()
             self.connected = False
             return False
 
@@ -351,21 +380,29 @@ class NgapConnection:
             print("[NGAP] No SCTP socket for receive loop")
             return
 
-        print("[NGAP] Starting receive loop")
+        print(f"[NGAP] Starting receive loop (connected={self.connected})")
         buffer_size = 8192
         while self.connected:
             try:
                 data = await self.sctp_socket.recv(buffer_size)
                 if data:
                     print(f"[NGAP] Received {len(data)} bytes from AMF")
+                    print(f"[NGAP] Data hex: {data.hex()[:128]}...")
                     if self.on_message:
                         self.on_message(data, 0)
                 else:
-                    print("[NGAP] Empty data received, connection may be closed")
-                    await asyncio.sleep(0.5)
+                    # Empty data means connection closed
+                    print("[NGAP] Connection closed (empty data)")
+                    self.connected = False
+                    break
+            except asyncio.CancelledError:
+                print("[NGAP] Receive loop cancelled")
+                break
             except Exception as e:
                 print(f"[NGAP] Receive error: {e}")
                 await asyncio.sleep(0.5)
+
+        print("[NGAP] Receive loop ended")
 
     def generate_ran_ue_id(self) -> int:
         """Generate new RAN UE NGAP ID."""

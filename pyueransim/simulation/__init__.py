@@ -347,10 +347,13 @@ class GnbSimulation:
         """Start gNB and connect to real AMF via SCTP."""
         self.gnb_state = "GNB_CONFIGURATION"
         self.log("INFO", "gNB starting...")
+        self.log("INFO", f"Config: AMF={self.config.amf_ip}:{self.config.amf_port}, local={self.config.ngap_ip}")
 
         # Create NGAP connection to AMF
+        gnb_id_hash = hash(self.gnb_id) % 0xFFFFFFFF
+        self.log("INFO", f"Creating NgapConnection with gnb_id={gnb_id_hash}")
         self.ngap_connection = NgapConnection(
-            gnb_id=hash(self.gnb_id) % 0xFFFFFFFF,
+            gnb_id=gnb_id_hash,
             amf_host=self.config.amf_ip,
             amf_port=self.config.amf_port,
             local_address=self.config.ngap_ip,
@@ -361,11 +364,13 @@ class GnbSimulation:
         self.gnb_state = "GNB_WAITING_FOR_N2"
 
         # Connect to AMF via SCTP
-        self.log("INFO", f"Connecting to AMF {self.config.amf_ip}:{self.config.amf_port}")
+        self.log("INFO", f"Connecting to AMF {self.config.amf_ip}:{self.config.amf_port}...")
 
         connected = await self.ngap_connection.connect()
+        self.log("INFO", f"Connection result: {connected}")
+
         if connected:
-            self.log("INFO", "Connected to AMF")
+            self.log("INFO", "Connected to AMF - starting receive loop")
             self.ngap_state = "NGAP_CONNECTED"
             self.amf_connected = True
             self.state.amf_connected = True
@@ -374,8 +379,9 @@ class GnbSimulation:
             asyncio.create_task(self.ngap_receive_loop())
 
             # Send NG Setup Request
-            self.log("INFO", "Sending NG Setup Request")
-            await self.ngap_connection.send_ng_setup_request()
+            self.log("INFO", "Sending NG Setup Request...")
+            result = await self.ngap_connection.send_ng_setup_request()
+            self.log("INFO", f"NG Setup Request sent: {result}")
 
             self.gnb_state = "GNB_READY"
             self.state.state = "GNB_READY"
@@ -387,13 +393,26 @@ class GnbSimulation:
 
     async def ngap_receive_loop(self) -> None:
         """Receive NGAP messages from AMF."""
+        self.log("INFO", "ngap_receive_loop started")
         if not self.ngap_connection:
+            self.log("ERROR", "ngap_receive_loop: no connection")
             return
 
+        self.log("INFO", f"ngap_receive_loop: amf_connected={self.amf_connected}")
         while self.amf_connected:
-            data = await self.ngap_connection.receive()
-            if data:
-                await self.handle_ngap_message(data)
+            try:
+                data = await self.ngap_connection.receive()
+                if data:
+                    self.log("INFO", f"ngap_receive_loop received {len(data)} bytes")
+                    await self.handle_ngap_message(data)
+                else:
+                    self.log("WARNING", "ngap_receive_loop: no data (connection closed?)")
+                    break
+            except Exception as e:
+                self.log("ERROR", f"ngap_receive_loop error: {e}")
+                await asyncio.sleep(0.5)
+
+        self.log("INFO", "ngap_receive_loop ended")
 
     async def handle_ngap_message(self, data: bytes) -> None:
         """Handle incoming NGAP message from AMF."""
