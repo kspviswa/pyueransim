@@ -33,7 +33,7 @@ def cmd_serve(args):
 
 def cmd_gnb(args):
     """Run gNB simulation connecting to real AMF."""
-    from pyueransim.simulation import GnbSimulation
+    from pyueransim.simulation import GnbSimulation, GnbConfig
     from pyueransim.core.ngap import NgapConnection
 
     config = GnbConfig(

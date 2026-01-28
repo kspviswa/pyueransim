@@ -151,6 +151,7 @@ class SctpSocket:
         self.socket = None
         self.connected = False
         self.is_ipv6 = ':' in local_address
+        self.on_association_change: Optional[Callable[[str], None]] = None
 
     async def create(self, max_in_streams: int = 10, max_out_streams: int = 10) -> None:
         """Create SCTP socket."""
@@ -191,6 +192,8 @@ class SctpSocket:
             )
             self.connected = True
             print(f"[SCTP] Connected to {remote_address}:{remote_port}")
+            if self.on_association_change:
+                self.on_association_change("connection_up")
             return True
         except asyncio.TimeoutError:
             print(f"[SCTP] Connection timeout to {remote_address}:{remote_port}")
@@ -224,13 +227,27 @@ class SctpSocket:
 
         try:
             loop = asyncio.get_event_loop()
-            data = await asyncio.wait_for(
-                loop.sock_recv(self.socket, buffer_size),
-                timeout=5.0
-            )
+            # Receive without timeout - blocks until data is available
+            data = await loop.sock_recv(self.socket, buffer_size)
+            if not data:
+                # Connection closed by peer
+                self.connected = False
+                return None
             return data
+        except asyncio.CancelledError:
+            raise
+        except OSError as e:
+            if e.errno == 107:  # ENOTCONN - Transport endpoint is not connected
+                self.connected = False
+            elif e.errno == 104:  # ECONNRESET - Connection reset by peer
+                self.connected = False
+                if self.on_association_change:
+                    self.on_association_change("connection_reset")
+            else:
+                print(f"[SCTP] Recv OSError: {e} (errno={e.errno})")
+            return None
         except Exception as e:
-            print(f"[SCTP] Recv failed: {e}")
+            print(f"[SCTP] Recv error: {type(e).__name__}: {e}")
             return None
 
     def close(self) -> None:
@@ -242,6 +259,8 @@ class SctpSocket:
                 pass
             self.socket = None
             self.connected = False
+            if self.on_association_change:
+                self.on_association_change("connection_closed")
 
 
 class NgapConnection:
@@ -270,6 +289,8 @@ class NgapConnection:
         """Establish SCTP connection to AMF."""
         try:
             self.sctp_socket = SctpSocket(self.local_address, self.local_port)
+            # Pass association change callback
+            self.sctp_socket.on_association_change = self.on_association_change
             await self.sctp_socket.create(max_in_streams=10, max_out_streams=10)
 
             connected = await self.sctp_socket.connect(self.amf_host, self.amf_port)
