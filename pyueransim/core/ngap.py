@@ -318,6 +318,12 @@ class NgapConnection:
             return False
         return await self.sctp_socket.send(data, stream=stream, ppid=NGAP_PPID)
 
+    async def receive(self, buffer_size: int = 8192) -> Optional[bytes]:
+        """Receive data from SCTP."""
+        if not self.sctp_socket:
+            return None
+        return await self.sctp_socket.recv(buffer_size)
+
     async def receive_loop(self) -> None:
         """Run the receive loop for incoming messages."""
         if not self.sctp_socket:
